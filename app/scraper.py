@@ -48,6 +48,30 @@ class OfferInfo:
 
 
 @dataclass
+class DetailFields:
+    """详情页字段的宽松解析结果：缺失字段为 None，由调用方决定如何处理。"""
+
+    title: str
+    model: str
+    pack_size: int | None
+    price_fen: int | None
+    stock_packs: int | None
+
+    @property
+    def missing(self) -> list[str]:
+        """缺失的关键包装字段名（每包片数 / 含税包价 / 可购包数）。"""
+        return [
+            name
+            for name, val in [
+                ("每包片数", self.pack_size),
+                ("含税包价", self.price_fen),
+                ("可购包数", self.stock_packs),
+            ]
+            if val is None
+        ]
+
+
+@dataclass
 class CrawlResult:
     list_pages: list[str]           # 实际抓取到的列表页 URL（按顺序）
     matched: list[OfferInfo]        # 匹配型号且解析成功的详情
@@ -119,8 +143,8 @@ def _to_fen(num_str: str) -> int:
     return int((d * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
-def parse_detail_page(url: str, soup: BeautifulSoup) -> OfferInfo:
-    """解析详情页：型号、每包片数、含税包价、可购包数。缺关键字段视为解析失败。"""
+def extract_detail_fields(soup: BeautifulSoup) -> DetailFields:
+    """宽松解析详情页字段：型号、每包片数、含税包价、可购包数；缺失字段为 None。"""
     page_text = soup.get_text("\n", strip=True)
 
     title = _pick_text(soup, ["h1.product-title", "h1"])
@@ -160,21 +184,28 @@ def parse_detail_page(url: str, soup: BeautifulSoup) -> OfferInfo:
         m = re.search(r"可购包数\s*[:：]?\s*(\d+)", page_text)
         stock_packs = int(m.group(1)) if m else None
 
-    missing = [
-        name
-        for name, val in [("每包片数", pack_size), ("含税包价", price_fen), ("可购包数", stock_packs)]
-        if val is None
-    ]
-    if missing:
-        raise ScrapeError(f"详情页解析失败 {url}: 缺少字段 {'、'.join(missing)}")
+    return DetailFields(
+        title=title,
+        model=model,
+        pack_size=pack_size,
+        price_fen=price_fen,
+        stock_packs=stock_packs,
+    )
+
+
+def parse_detail_page(url: str, soup: BeautifulSoup) -> OfferInfo:
+    """解析详情页：型号、每包片数、含税包价、可购包数。缺关键字段视为解析失败。"""
+    fields = extract_detail_fields(soup)
+    if fields.missing:
+        raise ScrapeError(f"详情页解析失败 {url}: 缺少字段 {'、'.join(fields.missing)}")
 
     return OfferInfo(
         detail_url=url,
-        title=title,
-        model=model,
-        pack_size=pack_size,      # type: ignore[arg-type]
-        price_fen=price_fen,      # type: ignore[arg-type]
-        stock_packs=stock_packs,  # type: ignore[arg-type]
+        title=fields.title,
+        model=fields.model,
+        pack_size=fields.pack_size,      # type: ignore[arg-type]
+        price_fen=fields.price_fen,      # type: ignore[arg-type]
+        stock_packs=fields.stock_packs,  # type: ignore[arg-type]
     )
 
 
